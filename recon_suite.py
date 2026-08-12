@@ -448,4 +448,37 @@ def sub_gov_recon():
 def main_menu():
     while True:
         print_header()
-        print(f"{C_PRIMARY}1.{C_RESET} {C_WHITE}Escáner de Dominio, IP, Subdominios,
+        print(f"{C_PRIMARY}1.{C_RESET} {C_WHITE}Escáner de Dominio, IP, Subdominios,Puertos, Headers y Archivos{C_RESET}")
+        print(f"{C_PRIMARY}2.{C_RESET} {C_WHITE}Auditoría de Portales Gubernamentales por País{C_RESET}")
+        print(f"{C_SECONDARY}3.{C_RESET} {C_WHITE}Ver Archivo de Resultados ({LOG_FILE}){C_RESET}")
+        print(f"{C_SUCCESS}4.{C_RESET} {C_WHITE}Buscar Actualizaciones del Script desde GitHub{C_RESET}")
+        print(f"{C_DANGER}0. Salir Definitivamente de la Herramienta{C_RESET}\n")
+
+        try:
+            option = input(f"{C_WHITE}Selecciona una opción [0-4]: {C_RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n\n{C_WARN}[!] Salida detectada. Cerrando...{C_RESET}\n")
+            break
+
+        if option == "1":
+            sub_domain_recon()
+        elif option == "2":
+            sub_gov_recon()
+        elif option == "3":
+            print_header()
+            print(f"{C_SECONDARY}{C_BOLD}--- HISTORIAL DE RESULTADOS GUARDADOS ---{C_RESET}\n")
+            if os.path.exists(LOG_FILE):
+                with open(LOG_FILE, "r", encoding="utf-8") as f:
+                    print(f"{C_WHITE}{f.read()}{C_RESET}")
+            else:
+                print(f"{C_MUTED}Aún no hay resultados guardados en {LOG_FILE}.{C_RESET}")
+            input(f"\n{C_MUTED}Presiona Enter para continuar...{C_RESET}")
+        elif option == "4":
+            update_script()
+            input(f"\n{C_MUTED}Presiona Enter para continuar...{C_RESET}")
+        elif option == "0":
+            print(f"\n{C_SUCCESS}Saliendo de la suite de auditoría...{C_RESET}\n")
+            sys.exit(0)
+
+if __name__ == "__main__":
+    main_menu()
