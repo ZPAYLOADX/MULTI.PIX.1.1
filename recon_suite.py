@@ -2,38 +2,43 @@
 # -*- coding: utf-8 -*-
 
 """
-Recon & Security Audit Suite v2.3 (Optimized Single-File Architecture)
-Multi-threaded reconnaissance tool with headers audit, sensitive files discovery,
-user-agent rotation, log exporter, and GitHub auto-updater.
+Recon & Security Audit Suite v2.5
+================================
+
+- Subdominios (subfinder)
+- HTTP 200 / HTTP‑Headers (curl)
+- Puertos abiertos (nmap –sS -p- o filtro)
+- TLS / Certificado (sslscan)
+- Huella dactilar (web_fingerprint)
+- CMS (web_wpscan)
+- Reportes: TXT + JSON
 """
 
-import socket
-import ssl
-import sys
 import os
+import sys
 import re
+import json
+import socket
 import time
 import random
-import json
 import subprocess
-import urllib.request
-import urllib.error
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from typing import List, Tuple, Dict, Any
 
-# Paleta de Colores Cyber Security / Terminal Profesional
-C_BOLD = '\033[1m'
-C_RESET = '\033[0m'
-C_PRIMARY = '\033[38;5;39m'     # Azul Cyber
+# ---------- UI / CONSTANTES ----------
+C_BOLD   = '\033[1m'
+C_RESET  = '\033[0m'
+C_PRIMARY   = '\033[38;5;39m'   # Azul Cyber
 C_SECONDARY = '\033[38;5;81m'   # Cían Neón
-C_MUTED = '\033[38;5;240m'       # Gris Oscuro / Bordes
-C_SUCCESS = '\033[38;5;82m'     # Verde Menta
-C_WARN = '\033[38;5;214m'        # Naranja
-C_DANGER = '\033[38;5;196m'      # Rojo Alerta
-C_WHITE = '\033[38;5;255m'       # Blanco Alto Contraste
+C_MUTED     = '\033[38;5;240m' # Gris Oscuro
+C_SUCCESS   = '\033[38;5;82m'   # Verde Menta
+C_WARN      = '\033[38;5;214m'  # Naranja
+C_DANGER    = '\033[38;5;196m'  # Rojo
+C_WHITE     = '\033[38;5;255m'  # Blanco
 
-LOG_FILE = "resultados_recon.txt"
-JSON_LOG_FILE = "resultados_recon.json"
+LOG_FILE    = "resultados_recon.txt"
+JSON_LOG    = "resultados_recon.json"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -42,443 +47,208 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0"
 ]
 
-def get_random_headers(extra_headers=None):
-    headers = {'User-Agent': random.choice(USER_AGENTS)}
-    if extra_headers:
-        headers.update(extra_headers)
-    return headers
-
-def clear_screen():
+# ---------- HELPERS ----------
+def clear_screen() -> None:
     os.system('cls' if os.name == 'nt' else 'clear')
 
-def print_header():
+def print_header() -> None:
     clear_screen()
     print(f"{C_MUTED}┌────────────────────────────────────────────────────────┐{C_RESET}")
-    print(f"{C_MUTED}│{C_RESET} {C_PRIMARY}{C_BOLD}        NETRECON & SECURITY SUITE v2.3         {C_RESET}{C_MUTED}│{C_RESET}")
+    print(f"{C_MUTED}│{C_RESET} {C_PRIMARY}{C_BOLD}        NETRECON & SECURITY SUITE v2.5         {C_RESET}{C_MUTED}│{C_RESET}")
     print(f"{C_MUTED}└────────────────────────────────────────────────────────┘{C_RESET}\n")
 
-def log_result(text):
-    """Guarda en pantalla y en el archivo txt de salida sin colores ANSI."""
-    clean_text = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text)
+def log_txt(msg: str) -> None:
+    """Escribe en pantalla y en el fichero TXT sin ANSI."""
+    clean = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', msg)
+    print(msg)
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(clean_text + "\n")
+            f.write(clean + "\n")
     except Exception:
         pass
 
-def start_log_session(module_name):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    header = f"\n==================================================\n[MÓDULO: {module_name}] - {timestamp}\n=================================================="
-    log_result(header)
-
-def update_script():
-    """Descarga la última versión desde GitHub y reinicia la herramienta."""
-    print_header()
-    print(f"{C_SECONDARY}{C_BOLD}--- ACTUALIZADOR AUTOMÁTICO DE GITHUB ---{C_RESET}\n")
-    print(f"{C_WARN}[+] Comprobando repositorio Git local...{C_RESET}")
-
-    if not os.path.exists(".git"):
-        print(f"\n{C_DANGER}[!] Este directorio no parece estar inicializado como repositorio Git.{C_RESET}")
-        print(f"{C_MUTED}Para usar el actualizador, clona el repositorio directamente con 'git clone'.{C_RESET}")
-        return
-
-    try:
-        print(f"{C_PRIMARY}[+] Conectando con GitHub y descargando actualizaciones...{C_RESET}\n")
-        result = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True)
-        output = result.stdout + result.stderr
-        print(f"{C_WHITE}{output}{C_RESET}")
-
-        if "Already up to date" in output or "Ya está actualizado" in output:
-            print(f"{C_SUCCESS}[✔] El script ya se encuentra en la última versión.{C_RESET}")
-        elif "Fast-forward" in output or "files changed" in output or "Unpacking objects" in output:
-            print(f"\n{C_SUCCESS}{C_BOLD}[✔] ¡Script actualizado correctamente desde GitHub!{C_RESET}")
-            print(f"{C_WARN}[i] Reiniciando la herramienta para aplicar los cambios...{C_RESET}")
-            time.sleep(2)
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        else:
-            print(f"{C_WARN}[!] Respuesta del sistema Git procesada.{C_RESET}")
-
-    except FileNotFoundError:
-        print(f"{C_DANGER}[!] Git no está instalado en este sistema. Instálalo usando: apt install git{C_RESET}")
-    except Exception as e:
-        print(f"{C_DANGER}[!] Ocurrió un error inesperado durante la actualización: {e}{C_RESET}")
-
-# --- MÓDULOS DE ESCANEO ---
-
-def check_ip_and_cdn(target):
-    start_log_session(f"IP & CDN Scanner ({target})")
-    print(f"\n{C_WARN}[+] Analizando IP y Protección CDN para: {target}{C_RESET}\n")
-    log_result(f"[+] Analizando IP y Protección CDN para: {target}")
-    
-    try:
-        ip = socket.gethostbyname(target)
-        msg_ip = f"IP Resuelta: {ip}"
-        print(f"{C_WHITE}IP Resuelta:{C_RESET} {C_SECONDARY}{ip}{C_RESET}")
-        log_result(msg_ip)
-        
-        cdn_detected = "Ninguno / Servidor Directo"
-        try:
-            req = urllib.request.Request(f"http://{target}", headers=get_random_headers())
-            with urllib.request.urlopen(req, timeout=5) as response:
-                headers = dict(response.info())
-                server = headers.get('Server', '').lower()
-                via = headers.get('Via', '').lower()
-                
-                if 'cloudflare' in server or 'cf-ray' in headers:
-                    cdn_detected = "Cloudflare"
-                elif 'cloudfront' in via or 'x-amz-cf-id' in headers:
-                    cdn_detected = "Amazon CloudFront"
-                elif 'gws' in server or 'google' in via:
-                    cdn_detected = "Google Cloud CDN / GFE"
-                elif 'imperva' in server or 'incapsula' in headers:
-                    cdn_detected = "Imperva / Incapsula"
-        except Exception:
-            pass
-
-        msg_cdn = f"Infraestructura / CDN: {cdn_detected}"
-        print(f"{C_WHITE}Infraestructura / CDN:{C_RESET} {C_PRIMARY}{C_BOLD}{cdn_detected}{C_RESET}")
-        log_result(msg_cdn)
-    except socket.gaierror:
-        err = f"[!] No se pudo resolver el dominio {target}."
-        print(f"{C_DANGER}{err}{C_RESET}")
-        log_result(err)
-
-def scan_subdomain(target_domain, sub):
-    full_domain = f"{sub}.{target_domain}"
-    try:
-        ip = socket.gethostbyname(full_domain)
-        return (full_domain, ip)
-    except socket.gaierror:
-        return None
-
-def brute_force_subdomains(target_domain):
-    start_log_session(f"Descubrimiento de Subdominios ({target_domain})")
-    print(f"\n{C_WARN}[+] Descubriendo subdominios activos para: {target_domain}{C_RESET}\n")
-    log_result(f"[+] Descubrimiento de subdominios para: {target_domain}")
-    
-    wordlist = [
-        "www", "mail", "remote", "blog", "webmail", "server", "ns1", "ns2",
-        "smtp", "secure", "vpn", "api", "dev", "staging", "test", "portal",
-        "admin", "app", "dashboard", "cdn", "cloud", "shop", "store", "m",
-        "forum", "news", "static", "img", "images", "assets", "status", "vps"
-    ]
-    
-    found_subdomains = []
-    
-    with ThreadPoolExecutor(max_workers=30) as executor:
-        results = executor.map(lambda sub: scan_subdomain(target_domain, sub), wordlist)
-        for res in results:
-            if res:
-                found_subdomains.append(res)
-
-    if found_subdomains:
-        msg = f"[✔] Subdominios Activos Encontrados ({len(found_subdomains)}):"
-        print(f"{C_SUCCESS}{msg}{C_RESET}\n")
-        log_result(msg)
-        for sub, ip in found_subdomains:
-            item = f"  - {sub} -> {ip}"
-            print(f" {C_WHITE}{sub}{C_RESET} -> {C_SECONDARY}{ip}{C_RESET}")
-            log_result(item)
+def log_json(entry: Dict[str, Any]) -> None:
+    """Agrega un registro a un array en el fichero JSON."""
+    if not os.path.exists(JSON_LOG):
+        data = []
     else:
-        msg = "[i] No se encontraron subdominios activos con la lista interna."
-        print(f"{C_MUTED}{msg}{C_RESET}")
-        log_result(msg)
+        with open(JSON_LOG, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                data = []
+    data.append(entry)
+    with open(JSON_LOG, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
-def scan_port(ip, port):
+# ---------- TOOL CALLS ----------
+# (Los siguientes wrappers llaman a los *tool* definidos en la plataforma)
+def run_subfinder(domain: str) -> List[str]:
+    """Devuelve la lista de subdominios encontrados."""
+    result = subfinder({"target_domain": domain})
+    return result.get("subdomains", [])
+
+def run_nmap_scan(target: str, ports: str = "-p-", scan_type: str = "-sS -A") -> Dict[str, Any]:
+    """Ejecuta nmap y devuelve el JSON de resultados."""
+    return nmap_scan({"target": target, "scan_type": scan_type, "ports": ports})
+
+def run_sslscan(host: str) -> Dict[str, Any]:
+    """Ejecuta sslscan y devuelve el JSON de resultados."""
+    return sslscan({"target_domain": host})
+
+def run_web_fingerprint(host: str) -> Dict[str, Any]:
+    """Devuelve la huella de la web."""
+    return web_fingerprint({"host": host})
+
+def run_web_wpscan(host: str) -> Dict[str, Any]:
+    """Devuelve la información de CMS (si es WordPress)."""
+    return web_wpscan({"host": host})
+
+# ---------- RECON FUNCIONES ----------
+def resolve_ip(host: str) -> str:
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        result = sock.connect_ex((ip, port))
-        sock.close()
-        if result == 0:
-            return port
-    except Exception:
-        pass
-    return None
-
-def run_port_scan(target):
-    start_log_session(f"Escáner de Puertos ({target})")
-    print(f"\n{C_WARN}[+] Escaneando puertos abiertos en: {target}{C_RESET}\n")
-    log_result(f"[+] Escaneando puertos abiertos en: {target}")
-    try:
-        ip = socket.gethostbyname(target)
-        common_ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 8080, 8443]
-        open_ports = []
-
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            results = executor.map(lambda p: scan_port(ip, p), common_ports)
-            for port in results:
-                if port:
-                    open_ports.append(port)
-
-        if open_ports:
-            msg = f"[✔] Puertos Abiertos Detectados: {open_ports}"
-            print(f"{C_SUCCESS}[✔] Puertos Abiertos Detectados:{C_RESET} {C_SECONDARY}{open_ports}{C_RESET}")
-            log_result(msg)
-        else:
-            msg = "[i] No se encontraron puertos abiertos comunes."
-            print(f"{C_MUTED}{msg}{C_RESET}")
-            log_result(msg)
+        return socket.gethostbyname(host)
     except socket.gaierror:
-        err = "[!] Error de resolución de nombre de dominio."
-        print(f"{C_DANGER}{err}{C_RESET}")
-        log_result(err)
+        return ""
 
-def validate_security_headers(target):
-    """Comprueba la presencia de cabeceras de seguridad HTTP clave."""
-    start_log_session(f"Auditoría Cabeceras HTTP ({target})")
-    print(f"\n{C_WARN}[+] Auditando Cabeceras de Seguridad en: {target}{C_RESET}\n")
-    log_result(f"[+] Auditando Cabeceras de Seguridad en: {target}")
-    
-    url = f"https://{target}" if not target.startswith("http") else target
-    security_headers = [
-        "Strict-Transport-Security",
-        "Content-Security-Policy",
-        "X-Frame-Options",
-        "X-Content-Type-Options",
-        "Referrer-Policy"
-    ]
-    
+def http_status(url: str, timeout: int = 4) -> Tuple[int, Dict[str, str]]:
+    """Devuelve el código HTTP y las cabeceras."""
+    import urllib.request, urllib.error
     try:
         req = urllib.request.Request(url, headers=get_random_headers())
-        with urllib.request.urlopen(req, timeout=5) as response:
-            headers = dict(response.info())
-            
-            for s_header in security_headers:
-                found = False
-                for h_key in headers:
-                    if h_key.lower() == s_header.lower():
-                        found = True
-                        val = headers[h_key]
-                        msg = f"  [✔] {s_header}: {val}"
-                        print(f" {C_SUCCESS}[✔]{C_RESET} {C_WHITE}{s_header}:{C_RESET} {C_SECONDARY}{val}{C_RESET}")
-                        log_result(msg)
-                        break
-                if not found:
-                    msg = f"  [!] {s_header}: Ausente / No Configurada"
-                    print(f" {C_DANGER}[!]{C_RESET} {C_WHITE}{s_header}:{C_RESET} {C_MUTED}Ausente / No Configurada{C_RESET}")
-                    log_result(msg)
-    except Exception as err:
-        msg = f"[!] Falló la conexión HTTP/HTTPS: {err}"
-        print(f"{C_DANGER}{msg}{C_RESET}")
-        log_result(msg)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            headers = dict(resp.info())
+            return resp.status, headers
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+    except Exception:
+        return 0, {}
 
-def scan_sensitive_files(target):
-    """Escanera rutas y archivos sensibles comunes."""
-    start_log_session(f"Búsqueda de Archivos Sensibles ({target})")
-    print(f"\n{C_WARN}[+] Buscando archivos sensibles/exposiciones en: {target}{C_RESET}\n")
-    log_result(f"[+] Buscando archivos sensibles en: {target}")
+def get_random_headers(extra: dict = None) -> dict:
+    h = {"User-Agent": random.choice(USER_AGENTS)}
+    if extra:
+        h.update(extra)
+    return h
 
-    base_url = f"http://{target}" if not target.startswith("http") else target
-    paths = [
-        "/.env", "/.git/HEAD", "/robots.txt", "/sitemap.xml",
-        "/config.php.bak", "/.htaccess", "/server-status", "/api/v1"
-    ]
+# ---------- MAIN SCAN ----------
+def run_full_scan(target: str, port_filter: str = "-p-", json_output: bool = True) -> None:
+    """Ejecución completa de todas las etapas."""
+    log_txt(f"\n{C_WARN}[+] Iniciando escaneo completo en {target}{C_RESET}\n")
+    start = datetime.now()
+    results: Dict[str, Any] = {"target": target, "timestamp": start.isoformat()}
 
-    def check_path(path):
-        url = f"{base_url.rstrip('/')}{path}"
-        try:
-            req = urllib.request.Request(url, headers=get_random_headers())
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                if resp.status == 200:
-                    return (path, resp.status)
-        except urllib.error.HTTPError as e:
-            if e.code in [401, 403]:
-                return (path, e.code)
-        except Exception:
-            pass
-        return None
+    # 1. IP & CDN
+    ip = resolve_ip(target)
+    results["ip"] = ip
+    log_txt(f"  IP Resuelta: {ip}")
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(check_path, paths)
-        found = False
-        for res in results:
-            if res:
-                found = True
-                path, status = res
-                if status == 200:
-                    msg = f"  [EXPOSED] {path} -> HTTP {status} OK"
-                    print(f" {C_SUCCESS}[EXPOSED]{C_RESET} {C_WHITE}{path}{C_RESET} -> {C_SUCCESS}200 OK{C_RESET}")
-                else:
-                    msg = f"  [PROTECTED] {path} -> HTTP {status}"
-                    print(f" {C_WARN}[PROTECTED]{C_RESET} {C_WHITE}{path}{C_RESET} -> {C_WARN}{status}{C_RESET}")
-                log_result(msg)
-        if not found:
-            msg = "[i] No se detectaron archivos sensibles expuestos en las rutas comunes."
-            print(f"{C_MUTED}{msg}{C_RESET}")
-            log_result(msg)
+    # 2. Subdominios (subfinder)
+    log_txt("\n  • Enumerando subdominios con subfinder…")
+    subdomains = run_subfinder(target)
+    results["subdomains"] = subdomains
+    log_txt(f"    Subdominios encontrados: {len(subdomains)}")
 
-def check_ssl_tls(target):
-    start_log_session(f"Auditoría SSL/TLS ({target})")
-    print(f"\n{C_WARN}[+] Auditando SSL/TLS en: {target}{C_RESET}\n")
-    log_result(f"[+] Auditando SSL/TLS en: {target}")
-    
-    hostname = target.replace("https://", "").replace("http://", "").split('/')[0]
-    
-    protocols = [
-        ("TLS 1.0", getattr(ssl, "PROTOCOL_TLSv1", None)),
-        ("TLS 1.1", getattr(ssl, "PROTOCOL_TLSv1_1", None)),
-        ("TLS 1.2", getattr(ssl, "PROTOCOL_TLSv1_2", None)),
-        ("TLS 1.3", getattr(ssl, "PROTOCOL_TLS", None))
-    ]
+    # 3. HTTP 200 + headers
+    log_txt("\n  • Verificando HTTP 200 y extrayendo cabeceras…")
+    http_ok = []
+    http_err = []
+    for sub in subdomains:
+        url = f"https://{sub}"
+        status, headers = http_status(url)
+        if status == 200:
+            http_ok.append({"subdomain": sub, "url": url, "headers": headers})
+        else:
+            http_err.append({"subdomain": sub, "url": url, "status": status})
+    results["http_ok"] = http_ok
+    results["http_err"] = http_err
+    log_txt(f"    HTTP 200: {len(http_ok)} | No 200: {len(http_err)}")
 
-    for name, proto in protocols:
-        if proto is None:
-            continue
-        try:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            with socket.create_connection((hostname, 443), timeout=3) as sock:
-                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    version = ssock.version()
-                    msg = f"Protocolo Activo ({name}): {version}"
-                    print(f" {C_WHITE}Protocolo Activo ({name}):{C_RESET} {C_SUCCESS}{version}{C_RESET}")
-                    log_result(msg)
-                    break
-        except Exception:
-            msg = f"{name}: No soportado / Rechazado"
-            print(f" {C_WHITE}{name}:{C_RESET} {C_MUTED}No soportado / Rechazado{C_RESET}")
-            log_result(msg)
+    # 4. Puertos abiertos (nmap)
+    log_txt("\n  • Escaneando puertos abiertos con nmap…")
+    nmap_res = run_nmap_scan(target, ports=port_filter, scan_type="-sS -A")
+    results["nmap"] = nmap_res
+    open_ports = []
+    for host in nmap_res.get("hosts", []):
+        for port in host.get("ports", []):
+            if port.get("state") == "open":
+                open_ports.append({"port": port["portid"], "service": port.get("service", {}).get("name")})
+    results["open_ports"] = open_ports
+    log_txt(f"    Puertos abiertos: {len(open_ports)}")
 
-# --- NAVEGACIÓN Y SUBMENÚS ---
+    # 5. TLS / Certificado (sslscan)
+    log_txt("\n  • Auditoría SSL/TLS con sslscan…")
+    ssl_res = run_sslscan(target)
+    results["sslscan"] = ssl_res
+    # Extraer CN y expiración
+    cert = ssl_res.get("certificates", [{}])[0]
+    cn = cert.get("subject", {}).get("CN", "N/A")
+    exp = cert.get("validity", {}).get("notAfter", "N/A")
+    results["tls_cert"] = {"CN": cn, "expires": exp}
+    log_txt(f"    CN: {cn} | Expira: {exp}")
 
-def sub_domain_recon():
+    # 6. Huella dactilar (web_fingerprint)
+    log_txt("\n  • Fingerprint de la web…")
+    fp_res = run_web_fingerprint(target)
+    results["fingerprint"] = fp_res
+    log_txt(f"    Server: {fp_res.get('server', 'N/A')}")
+
+    # 7. CMS detection (web_wpscan)
+    log_txt("\n  • Detección de CMS (WordPress) …")
+    wp_res = run_web_wpscan(target)
+    results["cms"] = wp_res
+    if wp_res.get("found"):
+        log_txt(f"    CMS detectado: WordPress (versión {wp_res.get('version')})")
+    else:
+        log_txt("    CMS no detectado.")
+
+    # 8. Resumen en TXT
+    log_txt("\n  • Generando resumen en TXT…")
+    log_txt(f"=== Resumen para {target} ===")
+    log_txt(f"IP: {ip}")
+    log_txt(f"Subdominios activos: {len(subdomains)}")
+    log_txt(f"HTTP 200: {len(http_ok)}")
+    log_txt(f"Puertos abiertos: {len(open_ports)}")
+    log_txt(f"TLS CN: {cn} | Expira: {exp}")
+    log_txt(f"Server: {fp_res.get('server', 'N/A')}")
+    if wp_res.get("found"):
+        log_txt(f"CMS: WordPress {wp_res.get('version')}")
+    else:
+        log_txt("CMS: No detectado")
+
+    # 9. JSON opcional
+    if json_output:
+        log_txt("\n  • Escribiendo reporte JSON…")
+        log_json(results)
+
+    end = datetime.now()
+    duration = (end - start).total_seconds()
+    log_txt(f"\n{C_SUCCESS}[✔] Escaneo completo en {duration:.1f}s{C_RESET}\n")
+
+# ---------- INTERFAZ ----------
+def main() -> None:
     while True:
         print_header()
-        print(f"{C_SECONDARY}{C_BOLD}--- SUBMENÚ: ESCÁNER DE DOMINIOS & IP ---{C_RESET}")
-        print(f"{C_PRIMARY}1.{C_RESET} {C_WHITE}Obtener IP y Detección de CDN{C_RESET}")
-        print(f"{C_PRIMARY}2.{C_RESET} {C_WHITE}Descubrimiento de Subdominios{C_RESET}")
-        print(f"{C_PRIMARY}3.{C_RESET} {C_WHITE}Escáner de Puertos Abiertos{C_RESET}")
-        print(f"{C_PRIMARY}4.{C_RESET} {C_WHITE}Auditoría de Cabeceras de Seguridad HTTP{C_RESET}")
-        print(f"{C_PRIMARY}5.{C_RESET} {C_WHITE}Búsqueda de Archivos Sensibles (.env, .git, etc.){C_RESET}")
-        print(f"{C_PRIMARY}6.{C_RESET} {C_WHITE}Auditoría SSL / TLS{C_RESET}")
-        print(f"{C_DANGER}0. Volver al Menú Principal{C_RESET}\n")
-        
+        print(f"{C_PRIMARY}1.{C_RESET} {C_WHITE}Escaneo completo (subdominios, puertos, TLS, CMS) …{C_RESET}")
+        print(f"{C_PRIMARY}2.{C_RESET} {C_WHITE}Salir{C_RESET}\n")
+
         try:
-            opt = input(f"{C_WHITE}Selecciona una opción [0-6]: {C_RESET}").strip()
+            opt = input(f"{C_WHITE}Selecciona una opción [1-2]: {C_RESET}").strip()
         except (KeyboardInterrupt, EOFError):
+            print(f"\n{C_WARN}[!] Salida detectada. Cerrando…{C_RESET}\n")
             break
 
         if opt == "1":
-            target = input(f"\n{C_WHITE}Ingresa el Dominio u Host: {C_RESET}").strip()
-            if target: check_ip_and_cdn(target)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
+            target = input(f"\n{C_WHITE}Introduce el dominio a escanear: {C_RESET}").strip()
+            if not target:
+                continue
+            # ¿Filtro de puertos?
+            fp = input(f"\n{C_WHITE}Filtrar puertos (ej. 80,443,8080) o dejar vacío para todos: {C_RESET}").strip()
+            port_filter = f"-p{fp}" if fp else "-p-"
+            run_full_scan(target, port_filter=port_filter)
+            input(f"\n{C_MUTED}Presiona Enter para continuar…{C_RESET}")
         elif opt == "2":
-            target = input(f"\n{C_WHITE}Ingresa el Dominio Base: {C_RESET}").strip()
-            if target: brute_force_subdomains(target)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
-        elif opt == "3":
-            target = input(f"\n{C_WHITE}Ingresa el Dominio u Host: {C_RESET}").strip()
-            if target: run_port_scan(target)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
-        elif opt == "4":
-            target = input(f"\n{C_WHITE}Ingresa el Dominio u Host: {C_RESET}").strip()
-            if target: validate_security_headers(target)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
-        elif opt == "5":
-            target = input(f"\n{C_WHITE}Ingresa el Dominio u Host: {C_RESET}").strip()
-            if target: scan_sensitive_files(target)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
-        elif opt == "6":
-            target = input(f"\n{C_WHITE}Ingresa el Dominio u Host: {C_RESET}").strip()
-            if target: check_ssl_tls(target)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
-        elif opt == "0":
-            break
-
-def sub_gov_recon():
-    gov_databases = {
-        "argentina": ["argentina.gob.ar", "afip.gob.ar", "anses.gob.ar", "pami.org.ar"],
-        "mexico": ["gob.mx", "sat.gob.mx", "imss.gob.mx", "sep.gob.mx"],
-        "bolivia": ["gob.bo", "impuestos.gob.bo", "aduana.gob.bo", "seprec.gob.bo"],
-        "colombia": ["gov.co", "dian.gov.co", "sisben.gov.co"],
-        "peru": ["gob.pe", "sunat.gob.pe", "reniec.gob.pe", "essalud.gob.pe"],
-        "chile": ["gob.cl", "sii.cl", "registrocivil.cl", "servel.cl"],
-        "ecuador": ["gob.ec", "sri.gob.ec", "registrocivil.gob.ec"],
-        "espana": ["gob.es", "agenciatributaria.gob.es", "seg-social.es"]
-    }
-    
-    while True:
-        print_header()
-        print(f"{C_SECONDARY}{C_BOLD}--- SUBMENÚ: ESCÁNER DE PÁGINAS GUBERNAMENTALES ---{C_RESET}")
-        print(f"{C_PRIMARY}1.{C_RESET} {C_WHITE}Argentina (.gob.ar){C_RESET}")
-        print(f"{C_PRIMARY}2.{C_RESET} {C_WHITE}México (.gob.mx){C_RESET}")
-        print(f"{C_PRIMARY}3.{C_RESET} {C_WHITE}Bolivia (.gob.bo){C_RESET}")
-        print(f"{C_PRIMARY}4.{C_RESET} {C_WHITE}Colombia (.gov.co){C_RESET}")
-        print(f"{C_PRIMARY}5.{C_RESET} {C_WHITE}Perú (.gob.pe){C_RESET}")
-        print(f"{C_PRIMARY}6.{C_RESET} {C_WHITE}Chile (.gob.cl / .cl){C_RESET}")
-        print(f"{C_PRIMARY}7.{C_RESET} {C_WHITE}Ecuador (.gob.ec){C_RESET}")
-        print(f"{C_PRIMARY}8.{C_RESET} {C_WHITE}España (.gob.es){C_RESET}")
-        print(f"{C_DANGER}0. Volver al Menú Principal{C_RESET}\n")
-
-        try:
-            opt = input(f"{C_WHITE}Selecciona el país a escanear [0-8]: {C_RESET}").strip()
-        except (KeyboardInterrupt, EOFError):
-            break
-
-        country_map = {
-            "1": "argentina", "2": "mexico", "3": "bolivia", "4": "colombia",
-            "5": "peru", "6": "chile", "7": "ecuador", "8": "espana"
-        }
-        
-        if opt in country_map:
-            country = country_map[opt]
-            domains = gov_databases[country]
-            start_log_session(f"Escáner Gubernamental ({country.capitalize()})")
-            print(f"\n{C_WARN}[+] Escaneando sitios gubernamentales de {country.capitalize()}...{C_RESET}\n")
-            log_result(f"[+] Escaneando sitios gubernamentales de {country.capitalize()}...")
-            
-            for dom in domains:
-                try:
-                    ip = socket.gethostbyname(dom)
-                    msg = f"  [ONLINE] {dom} -> {ip}"
-                    print(f" {C_SUCCESS}[ONLINE]{C_RESET} {C_WHITE}{dom}{C_RESET} -> {C_SECONDARY}{ip}{C_RESET}")
-                    log_result(msg)
-                except socket.gaierror:
-                    msg = f"  [OFFLINE] {dom}"
-                    print(f" {C_DANGER}[OFFLINE]{C_RESET} {C_WHITE}{dom}{C_RESET}")
-                    log_result(msg)
-            input(f"\n{C_MUTED}Presiona Enter para continuar en este submenú...{C_RESET}")
-        elif opt == "0":
-            break
-
-# --- MENÚ PRINCIPAL ---
-
-def main_menu():
-    while True:
-        print_header()
-        print(f"{C_PRIMARY}1.{C_RESET} {C_WHITE}Escáner de Dominio, IP, Subdominios,Puertos, Headers y Archivos{C_RESET}")
-        print(f"{C_PRIMARY}2.{C_RESET} {C_WHITE}Auditoría de Portales Gubernamentales por País{C_RESET}")
-        print(f"{C_SECONDARY}3.{C_RESET} {C_WHITE}Ver Archivo de Resultados ({LOG_FILE}){C_RESET}")
-        print(f"{C_SUCCESS}4.{C_RESET} {C_WHITE}Buscar Actualizaciones del Script desde GitHub{C_RESET}")
-        print(f"{C_DANGER}0. Salir Definitivamente de la Herramienta{C_RESET}\n")
-
-        try:
-            option = input(f"{C_WHITE}Selecciona una opción [0-4]: {C_RESET}").strip()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n\n{C_WARN}[!] Salida detectada. Cerrando...{C_RESET}\n")
-            break
-
-        if option == "1":
-            sub_domain_recon()
-        elif option == "2":
-            sub_gov_recon()
-        elif option == "3":
-            print_header()
-            print(f"{C_SECONDARY}{C_BOLD}--- HISTORIAL DE RESULTADOS GUARDADOS ---{C_RESET}\n")
-            if os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    print(f"{C_WHITE}{f.read()}{C_RESET}")
-            else:
-                print(f"{C_MUTED}Aún no hay resultados guardados en {LOG_FILE}.{C_RESET}")
-            input(f"\n{C_MUTED}Presiona Enter para continuar...{C_RESET}")
-        elif option == "4":
-            update_script()
-            input(f"\n{C_MUTED}Presiona Enter para continuar...{C_RESET}")
-        elif option == "0":
-            print(f"\n{C_SUCCESS}Saliendo de la suite de auditoría...{C_RESET}\n")
+            print(f"\n{C_SUCCESS}Saliendo de la herramienta…{C_RESET}\n")
             sys.exit(0)
 
 if __name__ == "__main__":
-    main_menu()
+    main()
